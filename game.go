@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-const duration = 100 * time.Millisecond
+const duration = 700 * time.Millisecond
 var group singleflight.Group
 var rooms sync.Map
 
