@@ -112,6 +112,16 @@ type mItem struct {
 	Price4 int64 `db:"price4"`
 }
 
+func GetItem(items []mItem, itemId int) mItem {
+	var result mItem
+	for _, item := range items {
+		if item.ItemID == itemId {
+			result = item
+		}
+	}
+	return result
+}
+
 func (item *mItem) GetPower(count int) *big.Int {
 	// power(x):=(cx+1)*d^(ax+b)
 	a := item.Power1
@@ -305,7 +315,7 @@ func buyItem(roomName string, itemID int, countBought int, reqTime int64) bool {
 	}
 	for _, b := range buyings {
 		var item mItem
-		tx.Get(&item, "SELECT * FROM m_item WHERE item_id = ?", b.ItemID)
+		item = GetItem(items, b.ItemID) 
 		cost := new(big.Int).Mul(item.GetPrice(b.Ordinal), big.NewInt(1000))
 		totalMilliIsu.Sub(totalMilliIsu, cost)
 		if b.Time <= reqTime {
@@ -315,7 +325,7 @@ func buyItem(roomName string, itemID int, countBought int, reqTime int64) bool {
 	}
 
 	var item mItem
-	tx.Get(&item, "SELECT * FROM m_item WHERE item_id = ?", itemID)
+	item = GetItem(items, itemID)
 	need := new(big.Int).Mul(item.GetPrice(countBought+1), big.NewInt(1000))
 	if totalMilliIsu.Cmp(need) < 0 {
 		log.Println("not enough")
@@ -367,12 +377,6 @@ func getStatus(roomName string) (*GameStatus, error) {
 	}
 
 	mItems := map[int]mItem{}
-	var items []mItem
-	err = tx.Select(&items, "SELECT * FROM m_item")
-	if err != nil {
-		tx.Rollback()
-		return nil, err
-	}
 	for _, item := range items {
 		mItems[item.ItemID] = item
 	}
