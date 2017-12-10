@@ -185,12 +185,14 @@ func int64ToExponential(significand, exponent int64) Exponential {
 	}
 
 func setupTenCache() []big.Int {
+	log.Println("start setupTenCache")
 	var tenCache = make([]big.Int, cacheSize) // メモリに応じて適宜調整のこと
 	bigTen := big.NewInt(10)
 	tenCache[0].Exp(bigTen, big.NewInt(int64(0)), nil)
 	for i := 1; i < len(tenCache); i++ {
 		tenCache[i].Mul(bigTen, &tenCache[i-1])
 	}
+	log.Println("end setupTenCache")
 	return tenCache
 }
 
