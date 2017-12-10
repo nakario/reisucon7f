@@ -595,13 +595,11 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 			})
 		}
 
-		if schedule[len(schedule)-1].Time < modifying.Time {
-			schedule = append(schedule, Schedule{
-				Time: modifying.Time,
-				MilliIsu: big2expCustom(totalMilliIsu),
-				TotalPower: big2expCustom(totalPower),
-			})
-		}
+		schedule = append(schedule, Schedule{
+			Time: modifying.Time,
+			MilliIsu: big2expCustom(totalMilliIsu),
+			TotalPower: big2expCustom(totalPower),
+		})
 
 		for itemID := range mItems {
 			if _, ok := itemOnSale[itemID]; ok {
