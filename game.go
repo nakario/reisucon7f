@@ -257,11 +257,8 @@ func updateRoomTime(tx *sqlx.Tx, roomName string, reqTime int64) (int64, bool) {
 	}
 
 	var currentTime int64
-	err = tx.Get(&currentTime, "SELECT floor(unix_timestamp(current_timestamp(3))*1000)")
-	if err != nil {
-		log.Println(err)
-		return 0, false
-	}
+	currentTime = time.Now().UnixNano() / int64(time.Millisecond)
+
 	if roomTime > currentTime {
 		log.Println("room time is future")
 		return 0, false
