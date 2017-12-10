@@ -112,16 +112,6 @@ type mItem struct {
 	Price4 int64 `db:"price4"`
 }
 
-func GetItem(items []mItem, itemId int) mItem {
-	var result mItem
-	for _, item := range items {
-		if item.ItemID == itemId {
-			result = item
-		}
-	}
-	return result
-}
-
 func (item *mItem) GetPower(count int) *big.Int {
 	// power(x):=(cx+1)*d^(ax+b)
 	a := item.Power1
@@ -315,7 +305,7 @@ func buyItem(roomName string, itemID int, countBought int, reqTime int64) bool {
 	}
 	for _, b := range buyings {
 		var item mItem
-		item = GetItem(items, b.ItemID) 
+		item = mItems[b.ItemID]
 		cost := new(big.Int).Mul(item.GetPrice(b.Ordinal), big.NewInt(1000))
 		totalMilliIsu.Sub(totalMilliIsu, cost)
 		if b.Time <= reqTime {
@@ -325,7 +315,7 @@ func buyItem(roomName string, itemID int, countBought int, reqTime int64) bool {
 	}
 
 	var item mItem
-	item = GetItem(items, itemID)
+	item = mItems[itemID]
 	need := new(big.Int).Mul(item.GetPrice(countBought+1), big.NewInt(1000))
 	if totalMilliIsu.Cmp(need) < 0 {
 		log.Println("not enough")
@@ -374,11 +364,6 @@ func getStatus(roomName string) (*GameStatus, error) {
 	if !ok {
 		tx.Rollback()
 		return nil, fmt.Errorf("updateRoomTime failure")
-	}
-
-	mItems := map[int]mItem{}
-	for _, item := range items {
-		mItems[item.ItemID] = item
 	}
 
 	addings := []Adding{}

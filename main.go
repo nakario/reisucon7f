@@ -20,7 +20,8 @@ import (
 var (
 	db *sqlx.DB
 	hosts []string
-	items []mItem
+	mItems map[int]mItem
+	
 )
 
 func hash(s string) uint32 {
@@ -75,10 +76,14 @@ func getInitializeHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
+	var items []mItem	
 	err = tx.Select(&items, "SELECT * FROM m_item")
 	if err != nil {
 		tx.Rollback()
 		return
+	}
+	for _, item := range items {
+		mItems[item.ItemID] = item
 	}
 	w.WriteHeader(204)
 }
