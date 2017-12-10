@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"math/big"
-	"strconv"
 	"time"
 	"sync"
 
@@ -13,11 +12,15 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/jmoiron/sqlx"
 	"golang.org/x/sync/singleflight"
+	"math"
 )
 
 const duration = 700 * time.Millisecond
 var group singleflight.Group
 var rooms sync.Map
+var (
+	big1000 = big.NewInt(1000)
+)
 
 type Room struct {
 	wg *sync.WaitGroup
@@ -112,6 +115,12 @@ type mItem struct {
 	Price4 int64 `db:"price4"`
 }
 
+func str2bigx1000(s string) *big.Int {
+	x := new(big.Int)
+	x.SetString(s+"000", 10)
+	return x
+}
+
 func (item *mItem) GetPower(count int) *big.Int {
 	// power(x):=(cx+1)*d^(ax+b)
 	a := item.Power1
@@ -144,18 +153,70 @@ func str2big(s string) *big.Int {
 	return x
 }
 
-func big2exp(n *big.Int) Exponential {
-	s := n.String()
+// 桁数が増えても大丈夫なBigintのDiv
+func customBigIntDiv(a *big.Int, b *big.Int) int64 {
+	alen := len(a.Bits())
+	if alen < 4 {
+		return big.NewInt(0).Div(a, b).Int64()
+	}
+	// WARN: ここらへんの big.NewInt(0)をグローバルに持てればより高速化出来るが並列化出来なくなるので諦め
+	an := big.NewInt(0).SetBits(a.Bits()[alen-3:])
+	bn := big.NewInt(0).SetBits(b.Bits()[alen-3:])
+	return big.NewInt(0).Div(an, bn).Int64()
+}
 
-	if len(s) <= 15 {
-		return Exponential{n.Int64(), 0}
+// int64をそのまま文字列化すると15桁以上になりうるので調整が必要
+func int64ToExponential(significand, exponent int64) Exponential {
+	var addketa int64
+	var divten int64
+	if significand < 1000000000000000 {
+		addketa, divten = 0, 1
+	} else if significand < 10000000000000000 {
+		addketa, divten = 1, 10
+	} else if significand < 100000000000000000 {
+		addketa, divten = 2, 100
+	} else if significand < 1000000000000000000 {
+		addketa, divten = 3, 1000
+	} else {
+		addketa, divten = 4, 10000
+	}
+	return Exponential{significand / divten, exponent + addketa}
 	}
 
-	t, err := strconv.ParseInt(s[:15], 10, 64)
-	if err != nil {
-		log.Panic(err)
+func setupTenCache() []big.Int {
+	var tenCache = make([]big.Int, 150000) // メモリに応じて適宜調整のこと
+	bigTen := big.NewInt(10)
+	tenCache[0].Exp(bigTen, big.NewInt(int64(0)), nil)
+	for i := 1; i < len(tenCache); i++ {
+		tenCache[i].Mul(bigTen, &tenCache[i-1])
 	}
-	return Exponential{t, int64(len(s) - 15)}
+	return tenCache
+}
+
+// WARN: 10^n をキャッシュして使いまわす(初期化に数秒かかる/メモリを喰うので適宜調整のこと)
+var tenCache = setupTenCache()
+var ten = big.NewInt(10)
+func big2expCustom(n *big.Int) Exponential {
+	w := n.Bits()
+	if len(w) <= 1 {
+		return int64ToExponential(n.Int64(), 0)
+	}
+	w1 := float64(w[len(w)-1]) // 上のケタ
+	w2 := float64(w[len(w)-2]) // 下のケタ
+	bef := len(w) - 2
+	log10ed := math.Log10(2) * 64 * float64(bef)
+	log10ed += math.Log10(float64(1<<64)*w1 + w1 + w2)
+	keta := int64(log10ed - 14.0)
+	if keta < int64(len(tenCache)) {
+		// WARN: ここらへんの big.NewInt(0)をグローバルに持てればより高速化出来るが並列化出来なくなるので諦め
+		ketaInt := &tenCache[keta]
+		significand := customBigIntDiv(n,ketaInt)
+		return int64ToExponential(significand, keta)
+	} else {
+		ketaInt := big.NewInt(0).Exp(ten, big.NewInt(keta), nil)
+		significand := customBigIntDiv(n, ketaInt)
+		return int64ToExponential(significand, keta)
+	}
 }
 
 func getCurrentTime() (int64, error) {
@@ -293,7 +354,7 @@ func buyItem(roomName string, itemID int, countBought int, reqTime int64) bool {
 	}
 
 	for _, a := range addings {
-		totalMilliIsu.Add(totalMilliIsu, new(big.Int).Mul(str2big(a.Isu), big.NewInt(1000)))
+		totalMilliIsu.Add(totalMilliIsu, str2bigx1000(a.Isu))
 	}
 
 	var buyings []Buying
@@ -306,7 +367,7 @@ func buyItem(roomName string, itemID int, countBought int, reqTime int64) bool {
 	for _, b := range buyings {
 		var item mItem
 		tx.Get(&item, "SELECT * FROM m_item WHERE item_id = ?", b.ItemID)
-		cost := new(big.Int).Mul(item.GetPrice(b.Ordinal), big.NewInt(1000))
+		cost := new(big.Int).Mul(item.GetPrice(b.Ordinal), big1000)
 		totalMilliIsu.Sub(totalMilliIsu, cost)
 		if b.Time <= reqTime {
 			gain := new(big.Int).Mul(item.GetPower(b.Ordinal), big.NewInt(reqTime-b.Time))
@@ -316,7 +377,7 @@ func buyItem(roomName string, itemID int, countBought int, reqTime int64) bool {
 
 	var item mItem
 	tx.Get(&item, "SELECT * FROM m_item WHERE item_id = ?", itemID)
-	need := new(big.Int).Mul(item.GetPrice(countBought+1), big.NewInt(1000))
+	need := new(big.Int).Mul(item.GetPrice(countBought+1), big1000)
 	if totalMilliIsu.Cmp(need) < 0 {
 		log.Println("not enough")
 		tx.Rollback()
@@ -438,7 +499,7 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 	for _, a := range addings {
 		// adding は adding.time に isu を増加させる
 		if a.Time <= currentTime {
-			totalMilliIsu.Add(totalMilliIsu, new(big.Int).Mul(str2big(a.Isu), big.NewInt(1000)))
+			totalMilliIsu.Add(totalMilliIsu, str2bigx1000(a.Isu))
 		} else {
 			addingAt[a.Time] = a
 		}
@@ -448,7 +509,7 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 		// buying は 即座に isu を消費し buying.time からアイテムの効果を発揮する
 		itemBought[b.ItemID]++
 		m := mItems[b.ItemID]
-		totalMilliIsu.Sub(totalMilliIsu, new(big.Int).Mul(m.GetPrice(b.Ordinal), big.NewInt(1000)))
+		totalMilliIsu.Sub(totalMilliIsu, new(big.Int).Mul(m.GetPrice(b.Ordinal), big1000))
 
 		if b.Time <= currentTime {
 			itemBuilt[b.ItemID]++
@@ -462,11 +523,11 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 	}
 
 	for _, m := range mItems {
-		itemPower0[m.ItemID] = big2exp(itemPower[m.ItemID])
+		itemPower0[m.ItemID] = big2expCustom(itemPower[m.ItemID])
 		itemBuilt0[m.ItemID] = itemBuilt[m.ItemID]
 		price := m.GetPrice(itemBought[m.ItemID] + 1)
 		itemPrice[m.ItemID] = price
-		if 0 <= totalMilliIsu.Cmp(new(big.Int).Mul(price, big.NewInt(1000))) {
+		if 0 <= totalMilliIsu.Cmp(new(big.Int).Mul(price, big1000)) {
 			itemOnSale[m.ItemID] = 0 // 0 は 時刻 currentTime で購入可能であることを表す
 		}
 	}
@@ -474,8 +535,8 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 	schedule := []Schedule{
 		Schedule{
 			Time:       currentTime,
-			MilliIsu:   big2exp(totalMilliIsu),
-			TotalPower: big2exp(totalPower),
+			MilliIsu:   big2expCustom(totalMilliIsu),
+			TotalPower: big2expCustom(totalPower),
 		},
 	}
 
@@ -487,7 +548,7 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 		// 時刻 t で発生する adding を計算する
 		if a, ok := addingAt[t]; ok {
 			updated = true
-			totalMilliIsu.Add(totalMilliIsu, new(big.Int).Mul(str2big(a.Isu), big.NewInt(1000)))
+			totalMilliIsu.Add(totalMilliIsu, str2bigx1000(a.Isu))
 		}
 
 		// 時刻 t で発生する buying を計算する
@@ -506,7 +567,7 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 				itemBuilding[id] = append(itemBuilding[id], Building{
 					Time:       t,
 					CountBuilt: itemBuilt[id],
-					Power:      big2exp(itemPower[id]),
+					Power:      big2expCustom(itemPower[id]),
 				})
 			}
 		}
@@ -514,8 +575,8 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 		if updated {
 			schedule = append(schedule, Schedule{
 				Time:       t,
-				MilliIsu:   big2exp(totalMilliIsu),
-				TotalPower: big2exp(totalPower),
+				MilliIsu:   big2expCustom(totalMilliIsu),
+				TotalPower: big2expCustom(totalPower),
 			})
 		}
 
@@ -524,7 +585,7 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 			if _, ok := itemOnSale[itemID]; ok {
 				continue
 			}
-			if 0 <= totalMilliIsu.Cmp(new(big.Int).Mul(itemPrice[itemID], big.NewInt(1000))) {
+			if 0 <= totalMilliIsu.Cmp(new(big.Int).Mul(itemPrice[itemID], big1000)) {
 				itemOnSale[itemID] = t
 			}
 		}
@@ -541,7 +602,7 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 			ItemID:      itemID,
 			CountBought: itemBought[itemID],
 			CountBuilt:  itemBuilt0[itemID],
-			NextPrice:   big2exp(itemPrice[itemID]),
+			NextPrice:   big2expCustom(itemPrice[itemID]),
 			Power:       itemPower0[itemID],
 			Building:    itemBuilding[itemID],
 		})
