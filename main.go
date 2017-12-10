@@ -20,6 +20,8 @@ import (
 var (
 	db *sqlx.DB
 	hosts []string
+	mItems map[int]mItem
+	
 )
 
 func hash(s string) uint32 {
@@ -69,6 +71,20 @@ func getInitializeHandler(w http.ResponseWriter, r *http.Request) {
 	db.MustExec("TRUNCATE TABLE adding")
 	db.MustExec("TRUNCATE TABLE buying")
 	db.MustExec("TRUNCATE TABLE room_time")
+	tx, err := db.Beginx()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	var items []mItem	
+	err = tx.Select(&items, "SELECT * FROM m_item")
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+	for _, item := range items {
+		mItems[item.ItemID] = item
+	}
 	w.WriteHeader(204)
 }
 
