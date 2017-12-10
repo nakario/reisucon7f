@@ -418,6 +418,41 @@ func getStatusWithGroup(roomName string) (*GameStatus, error) {
 	return status, nil
 }
 
+
+func cmpx1000(x *big.Int, y *big.Int) bool {
+	// calc: x >= y * 1000
+	xw, yw := x.Bits(), y.Bits()
+	xlen, ylen := len(xw), len(yw)
+	// 極端に桁が違うものはすぐに省ける
+	if xlen > ylen+1 {
+		return true // x:[x1 x2 x3] y:[y1]
+	}
+	if xlen < ylen {
+		return false // x:[x1] y:[y1 y2]
+	}
+
+	// それとなく近いわけでは無いものを除外
+	xw1 := xw[xlen-1] // X上のケタ (> 0)
+	yw1 := yw[ylen-1] // Y上のケタ (> 0)
+	if xlen == ylen {
+		if xw1/1000 > yw1 {
+			return true // 102456  102.456
+		} else if xw1/1000 < yw1 {
+			return false
+		}
+	}else{
+		// xlen == ylen+1
+		if xw1 >= 1000 {
+			return true
+		}
+		// なんかダメ
+		// if yw1 < math.MaxUint64/1000  { return false}
+	}
+	// 近すぎるので普通に計算
+	return 0 <= x.Cmp(new(big.Int).Mul(y, big1000))
+}
+
+
 func getStatus(roomName string) (*GameStatus, error) {
 	tx, err := db.Beginx()
 	if err != nil {
@@ -519,7 +554,8 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 		itemBuilt0[m.ItemID] = itemBuilt[m.ItemID]
 		price := m.GetPrice(itemBought[m.ItemID] + 1)
 		itemPrice[m.ItemID] = price
-		if 0 <= totalMilliIsu.Cmp(new(big.Int).Mul(price, big1000)) {
+		//if 0 <= totalMilliIsu.Cmp(new(big.Int).Mul(price, big1000)) {
+		if cmpx1000(totalMilliIsu,price){
 			itemOnSale[m.ItemID] = 0 // 0 は 時刻 currentTime で購入可能であることを表す
 		}
 	}
