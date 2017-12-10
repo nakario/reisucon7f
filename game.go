@@ -16,6 +16,7 @@ import (
 )
 
 const duration = 700 * time.Millisecond
+const cacheSize = 100000
 var group singleflight.Group
 var rooms sync.Map
 var (
@@ -184,7 +185,7 @@ func int64ToExponential(significand, exponent int64) Exponential {
 	}
 
 func setupTenCache() []big.Int {
-	var tenCache = make([]big.Int, 150000) // メモリに応じて適宜調整のこと
+	var tenCache = make([]big.Int, cacheSize) // メモリに応じて適宜調整のこと
 	bigTen := big.NewInt(10)
 	tenCache[0].Exp(bigTen, big.NewInt(int64(0)), nil)
 	for i := 1; i < len(tenCache); i++ {
