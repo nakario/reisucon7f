@@ -571,6 +571,12 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 				MilliIsu: big2expCustom(totalMilliIsu),
 				TotalPower: big2expCustom(totalPower),
 			})
+		} else {
+			schedule[len(schedule)-1] = Schedule{
+				Time: modifying.Time,
+				MilliIsu: big2expCustom(totalMilliIsu),
+				TotalPower: big2expCustom(totalPower),
+			}
 		}
 
 		for itemID := range mItems {
