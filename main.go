@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"os"
 	"time"
+	"strings"
+	"hash/fnv"
 
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
@@ -17,7 +19,14 @@ import (
 
 var (
 	db *sqlx.DB
+	hosts []string
 )
+
+func hash(s string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return h.Sum32()
+}
 
 func initDB() {
 	db_host := os.Getenv("ISU_DB_HOST")
@@ -74,7 +83,7 @@ func getRoomHandler(w http.ResponseWriter, r *http.Request) {
 		Host string `json:"host"`
 		Path string `json:"path"`
 	}{
-		Host: "",
+		Host: hosts[hash(roomName) % uint32(len(hosts))],
 		Path: path,
 	})
 }
@@ -95,6 +104,11 @@ func wsGameHandler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	initDB()
+
+	hosts = make([]string, 0)
+	for _, host := range strings.Split(os.Getenv("CCO_HOSTS"), ",") {
+		hosts = append(hosts, host)
+	}
 
 	r := mux.NewRouter()
 	r.HandleFunc("/initialize", getInitializeHandler)
