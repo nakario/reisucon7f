@@ -397,7 +397,7 @@ func buyItem(roomName string, itemID int, countBought int, reqTime int64) bool {
 }
 
 func getStatusWithGroup(roomName string) (*GameStatus, error) {
-	v, err, shared := group.Do(roomName, func() (interface{}, error) {
+	v, err, _ := group.Do(roomName, func() (interface{}, error) {
 		return getStatus(roomName)
 	})
 	if err != nil {
@@ -407,8 +407,6 @@ func getStatusWithGroup(roomName string) (*GameStatus, error) {
 	if !ok {
 		return nil, fmt.Errorf("Failed to assert v")
 	}
-	log.Println("getStatusWithGroup::room:", roomName)
-	log.Println("getStatusWithGroup::shared:", shared)
 	return status, nil
 }
 
