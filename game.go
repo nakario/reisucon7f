@@ -13,7 +13,6 @@ import (
 	"github.com/jmoiron/sqlx"
 	"golang.org/x/sync/singleflight"
 	"math"
-	"sort"
 )
 
 const duration = 700 * time.Millisecond
@@ -69,13 +68,6 @@ type Buying struct {
 	ItemID   int    `db:"item_id"`
 	Ordinal  int    `db:"ordinal"`
 	Time     int64  `db:"time"`
-}
-
-type Modifying struct {
-	isAdding bool
-	Adding
-	Buying
-	Time int64
 }
 
 type Schedule struct {
@@ -515,9 +507,10 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 		itemBuilding = map[int][]Building{}  // ItemID => Buildings
 		itemPower0   = map[int]Exponential{} // ItemID => currentTime における Power
 		itemBuilt0   = map[int]int{}         // ItemID => currentTime における BuiltCount
-	)
 
-	modifyings := make([]Modifying, 0)
+		addingAt = map[int64]Adding{}   // Time => currentTime より先の Adding
+		buyingAt = map[int64][]Buying{} // Time => currentTime より先の Buying
+	)
 
 	for itemID := range mItems {
 		itemPower[itemID] = big.NewInt(0)
@@ -529,7 +522,7 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 		if a.Time <= currentTime {
 			totalMilliIsu.Add(totalMilliIsu, str2bigx1000(a.Isu))
 		} else {
-			modifyings = append(modifyings, Modifying{isAdding: true, Adding: a, Time: a.Time})
+			addingAt[a.Time] = a
 		}
 	}
 
@@ -546,7 +539,7 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 			totalPower.Add(totalPower, power)
 			itemPower[b.ItemID].Add(itemPower[b.ItemID], power)
 		} else {
-			modifyings = append(modifyings, Modifying{isAdding: false, Buying: b, Time: b.Time})
+			buyingAt[b.Time] = append(buyingAt[b.Time], b)
 		}
 	}
 
@@ -569,53 +562,60 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 		},
 	}
 
-	sort.Slice(modifyings, func(i, j int) bool {
-		return modifyings[i].Time < modifyings[j].Time
-	})
+	// currentTime から 1000 ミリ秒先までシミュレーションする
+	for t := currentTime + 1; t <= currentTime+1000; t++ {
+		totalMilliIsu.Add(totalMilliIsu, totalPower)
+		updated := false
 
-	for _, modifying := range modifyings {
-		if modifying.Time <= currentTime || currentTime + 1000 < modifying.Time {
-			continue
+		// 時刻 t で発生する adding を計算する
+		if a, ok := addingAt[t]; ok {
+			updated = true
+			totalMilliIsu.Add(totalMilliIsu, str2bigx1000(a.Isu))
 		}
 
-		totalMilliIsu.Add(totalMilliIsu, totalPower)
+		// 時刻 t で発生する buying を計算する
+		if _, ok := buyingAt[t]; ok {
+			updated = true
+			updatedID := map[int]bool{}
+			for _, b := range buyingAt[t] {
+				m := mItems[b.ItemID]
+				updatedID[b.ItemID] = true
+				itemBuilt[b.ItemID]++
+				power := m.GetPower(b.Ordinal)
+				itemPower[b.ItemID].Add(itemPower[b.ItemID], power)
+				totalPower.Add(totalPower, power)
+			}
+			for id := range updatedID {
+				itemBuilding[id] = append(itemBuilding[id], Building{
+					Time:       t,
+					CountBuilt: itemBuilt[id],
+					Power:      big2expCustom(itemPower[id]),
+				})
+			}
+		}
 
-		if modifying.isAdding {
-			totalMilliIsu.Add(totalMilliIsu, str2bigx1000(modifying.Adding.Isu))
-		} else {
-			m := mItems[modifying.Buying.ItemID]
-			itemBuilt[modifying.Buying.ItemID]++
-			power := m.GetPower(modifying.Buying.Ordinal)
-			itemPower[modifying.Buying.ItemID].Add(itemPower[modifying.Buying.ItemID], power)
-			totalPower.Add(totalPower, power)
-			itemBuilding[modifying.Buying.ItemID] = append(itemBuilding[modifying.Buying.ItemID], Building{
-				Time: modifying.Time,
-				CountBuilt: itemBuilt[modifying.Buying.ItemID],
-				Power: big2expCustom(itemPower[modifying.Buying.ItemID]),
+		if updated {
+			schedule = append(schedule, Schedule{
+				Time:       t,
+				MilliIsu:   big2expCustom(totalMilliIsu),
+				TotalPower: big2expCustom(totalPower),
 			})
 		}
 
-		schedule = append(schedule, Schedule{
-			Time: modifying.Time,
-			MilliIsu: big2expCustom(totalMilliIsu),
-			TotalPower: big2expCustom(totalPower),
-		})
-
+		// 時刻 t で購入可能になったアイテムを記録する
 		for itemID := range mItems {
 			if _, ok := itemOnSale[itemID]; ok {
 				continue
 			}
 			if 0 <= totalMilliIsu.Cmp(new(big.Int).Mul(itemPrice[itemID], big1000)) {
-				itemOnSale[itemID] = modifying.Time
+				itemOnSale[itemID] = t
 			}
 		}
 	}
 
 	gsAdding := []Adding{}
-	for _, m := range modifyings {
-		if m.isAdding {
-			gsAdding = append(gsAdding, m.Adding)
-		}
+	for _, a := range addingAt {
+		gsAdding = append(gsAdding, a)
 	}
 
 	gsItems := []Item{}
