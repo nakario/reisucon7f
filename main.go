@@ -10,6 +10,7 @@ import (
 	"time"
 	"strings"
 	"hash/fnv"
+	"net/http/pprof"
 
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
@@ -117,6 +118,19 @@ func wsGameHandler(w http.ResponseWriter, r *http.Request) {
 	go serveGameConn(ws, roomName)
 }
 
+func AttachProfiler(router *mux.Router) {
+	router.HandleFunc("/debug/pprof/", pprof.Index)
+	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	router.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+
+	// Manually add support for paths linked to by index page at /debug/pprof/
+	router.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+	router.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+	router.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
+	router.Handle("/debug/pprof/block", pprof.Handler("block"))
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	initDB()
@@ -127,6 +141,7 @@ func main() {
 	}
 
 	r := mux.NewRouter()
+	AttachProfiler(r)
 	r.HandleFunc("/initialize", getInitializeHandler)
 	r.HandleFunc("/room/", getRoomHandler)
 	r.HandleFunc("/room/{room_name}", getRoomHandler)
