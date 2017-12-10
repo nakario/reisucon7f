@@ -570,10 +570,6 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 	}
 
 	sort.Slice(modifyings, func(i, j int) bool {
-		return modifyings[i].isAdding && !modifyings[j].isAdding
-	})
-
-	sort.Slice(modifyings, func(i, j int) bool {
 		return modifyings[i].Time < modifyings[j].Time
 	})
 
