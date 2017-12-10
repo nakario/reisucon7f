@@ -607,7 +607,7 @@ func calcStatus(currentTime int64, mItems map[int]mItem, addings []Adding, buyin
 			if _, ok := itemOnSale[itemID]; ok {
 				continue
 			}
-			if 0 <= totalMilliIsu.Cmp(new(big.Int).Mul(itemPrice[itemID], big1000)) {
+			if cmpx1000(totalMilliIsu, itemPrice[itemID]) {
 				itemOnSale[itemID] = t
 			}
 		}
